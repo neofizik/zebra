@@ -11,13 +11,13 @@ find_package(
 
 add_executable(
         # executable name
-        example_exec
+        avlexample_exec
         # source files
         main.cpp
 )
 
 target_link_libraries(
-        example_exec
+        avlexample_exec
         PUBLIC
         AVL
 )

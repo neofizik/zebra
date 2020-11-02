@@ -1,10 +1,12 @@
 #include <iostream>
 #include <cmath>
 #include "AVL.h"
+#include <queue>
 
 using namespace std;
 using namespace avl;
 using namespace atl;
+using namespace avs;
 
 struct Line
 {
@@ -80,6 +82,15 @@ void process(Image im)
 {
     int x = W;
     int y = H;
+    int bw_width = 110;
+    Pixel green;
+    green.Set(0,255,0,0);
+    DrawingStyle standard;
+    standard.drawingMode = DrawingMode::HighQuality;
+    standard.opacity = 1.0f;
+    standard.thickness = 1.0f;
+    standard.filled = false;
+    standard.pointSize = 1.0f;
 
     // Выделяем белый цвет
 
@@ -93,12 +104,36 @@ void process(Image im)
     int ErodeSize = int(y/40);
     ErodeImage(mask, NIL, NIL, NIL, KernelShape::Box, 1, 1, erode, a);
     SaveImage(erode,NIL,"erode.jpg",0);
+
+    // Находим контуры
+    ThresholdToRegion(erode,NIL,128.0f,NIL,0.0f,a);
+    Array<Path> b;
+    queue <double> bxRight;
+    queue <double> bxLeft;
+    queue <double> byRight;
+    queue <double> byLeft;
+    RegionContours(a,RegionContourMode::PixelCenters,RegionConnectivity::EightDirections,b);
+    for (auto path : b)
+    {
+        Rectangle2D rect;
+        PathBoundingRectangle(path,BoundingRectangleFeature::MinimalArea,0.0f,RectangleOrientation::Horizontal,rect);
+        if(rect.width > bw_width)
+        {
+            Segment2D line;
+            line.point1.x = rect.origin.x;
+            line.point1.y = rect.origin.y;
+            line.point2.x = rect.origin.x + rect.width;
+            line.point2.y = rect.origin.y;
+            DrawSegment(im,line,NIL,green,standard,MarkerType::Circle,5.0f);
+        }
+    }
+    SaveImage(im,NIL,"im.jpg",0);
 }
 
 int main()
 {
     Image im;
-    LoadImage("../i.jpg",0,im);
+    LoadImage("../iii.jpg",0,im);
     process(im);
     return 0;
 }

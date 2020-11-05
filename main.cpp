@@ -82,13 +82,16 @@ double* QueueToArray(queue <double> q, int num)
 void process(Image im)
 {
     int bw_width = 170; // минимальная длина полосы перехода в px
+    int radius = 250;
 
     Pixel green; // настройки рисования
-    Pixel blue;
+    Pixel cyan;
     Pixel yellow;
+    Pixel blue;
     green.Set(0,255,0,0);
-    blue.Set(0,250,250,0);
+    cyan.Set(0,250,250,0);
     yellow.Set(250,250,0,0);
+    blue.Set(0,0,255,0);
     DrawingStyle standard;
     standard.drawingMode = DrawingMode::HighQuality;
     standard.opacity = 1.0f;
@@ -96,13 +99,17 @@ void process(Image im)
     standard.filled = false;
     standard.pointSize = 1.0f;
 
-    Array<Path> b;
+    Array<Path> b; // массив контуров на изображении
     queue <double> bxRight;
     queue <double> bxLeft;
     queue <double> byRight;
     queue <double> byLeft;
-    Array<Point2D> bxbyLeftArray;
+    Array<Point2D> bxbyLeftArray; // точки слева и справа
     Array<Point2D> bxbyRightArray;
+    Array<Point2D> boundedLeft; // точки слева и справа, лежащие в пределах окружности
+    Array<Point2D> boundedRight;
+    Point2D median_L; // медианные точки
+    Point2D median_R;
 
     // Рассчитываем размеры изображения
 
@@ -119,23 +126,33 @@ void process(Image im)
     Image toResize = im;
     ResizeImage(toResize,x,y,ResizeMethod::NearestNeighbour,im);
 
+    // Анализ гистограммы
+
+    Histogram hist;
+    float threshold;
+    ImageHistogram(im,NIL,0,1.0f,0.0f,255.0f,hist);
+    HistogramDataMedian(hist,threshold);
+    threshold+=20;
+
     // Выделяем белый цвет
 
     Image mask;
-    ThresholdImage(im,NIL,160.0f,NIL,0.0f,mask);
+    ThresholdImage(im,NIL,threshold,NIL,0.0f,mask);
     SaveImage(mask,NIL,"mask.jpg",0);
 
     // Размываем изображение
     Image erode;
     Region a;
-    // int ErodeSize = int(y/60);
-    ErodeImage(mask, NIL, NIL, NIL, KernelShape::Box, 1, 1, erode, a);
+    int ErodeSize = int(y/60);
+    ErodeImage(mask, NIL, NIL, NIL, KernelShape::Box, ErodeSize, 1, erode, a);
     SaveImage(erode,NIL,"erode.jpg",0);
 
     // Находим контуры различных объектов на изображении
 
+    DetectEdges_AsPaths(erode,NIL,EdgeFilter::Canny,2.0f,NIL,15.0f,5.0f,NIL,30.0f,0.0f,NIL,0.0f,b);
+
     ThresholdToRegion(erode,NIL,128.0f,NIL,0.0f,a);
-    RegionContours(a,RegionContourMode::PixelCenters,RegionConnectivity::EightDirections,b);
+   // RegionContours(a,RegionContourMode::PixelCenters,RegionConnectivity::EightDirections,b);
 
     // Отсекаем мелкие объекты, рисуем зеленые линии вдоль линий пехеходного перехода
 
@@ -161,27 +178,83 @@ void process(Image im)
             bxbyRightArray.PushBack(line.point2);
             Circle2D PointCircle;
             CreateCircle(line.point1,Anchor2D::MiddleCenter,5,PointCircle);
-            DrawCircle(im, PointCircle,NIL,blue,standard);
+            DrawCircle(im, PointCircle,NIL,cyan,standard);
             CreateCircle(line.point2,Anchor2D::MiddleCenter,5,PointCircle);
             DrawCircle(im, PointCircle,NIL,yellow,standard);
             num++;
         }
     }
 
-    // Находим среднее значение для левого и правого массива
+    // Находим медианную точку для левого и правого массива
 
-    Point2D median_L;
-    Point2D median_R;
     PointsMedian(bxbyLeftArray,NIL,10,median_L);
     PointsMedian(bxbyRightArray,NIL,10,median_R);
 
     SaveImage(im,NIL,"im.jpg",0);
+
+    // Медианная точка - центр окружности с радиусом r. Выбираем только те точки, что лежат в пределах окружности
+
+    for(auto point : bxbyLeftArray)
+    {
+        if(pow((median_L.x - point.x),2) + pow((median_L.y - point.y),2) < pow(radius,2))
+        {
+            boundedLeft.PushBack(point);
+        }
+    }
+
+    for(auto point : bxbyRightArray)
+    {
+        if(pow((median_R.x - point.x),2) + pow((median_R.y - point.y),2) < pow(radius,2))
+        {
+            boundedRight.PushBack(point);
+        }
+    }
+
+    // RANSAC
+
+    // Conditional<Line2D> lineLeft;
+    // Conditional<Line2D> lineRight;
+
+    Line2D lineLeft;
+    Line2D lineRight;
+
+    FitLineToPoints_LTE(boundedLeft,NIL,3,NIL,lineLeft,NIL,NIL,num);
+    FitLineToPoints_LTE(boundedRight,NIL,3,NIL,lineRight,NIL,NIL,num);
+
+
+    // FitLineToPoints_RANSAC(boundedLeft,NIL,0,10.0f,42,lineLeft);
+    // FitLineToPoints_RANSAC(boundedRight,NIL,0,10.0f,42,lineRight);
+    DrawLine(im,lineLeft,NIL,blue,standard);
+    DrawLine(im,lineRight,NIL,blue,standard);
+    SaveImage(im,NIL,"im.jpg",0);
+    int i = 0;
+    while(1)
+    {
+        Conditional<Point2D> point;
+        LineLineIntersection(lineLeft,lineRight,point);
+        float distleft;
+        float distright;
+        DrawingStyle draw;
+        draw.thickness = 3.0f;
+        PointToLineDistance(bxbyLeftArray[i],lineLeft,1.0f,distleft,NIL,NIL);
+        PointToLineDistance(bxbyRightArray[i],lineRight,1.0f,distright,NIL,NIL);
+        if((bxbyLeftArray[i].y > point->y && distleft < 15) || (bxbyRightArray[i].y > point->y && distright < 15))
+        {
+            Line2D lin;
+            LineThroughPoints(bxbyLeftArray[i],bxbyRightArray[i],lin);
+            DrawLine(im,lin,NIL,cyan,draw);
+            break;
+        }
+        i++;
+    }
+    SaveImage(im,NIL,"im.jpg",0);
+
 }
 
 int main()
 {
     Image im;
-    LoadImage("../im2.jpg",0,im);
+    LoadImage("../im6.jpg",0,im);
     process(im);
     return 0;
 }
